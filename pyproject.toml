@@ -20,6 +20,10 @@ dependencies = [
     "typing-extensions",
     "fastapi",
     "uvicorn", 
+    "streamlit",
+    "requests",
+    "pypdf",
+    "python-multipart"
 ]
 
 [tool.setuptools]

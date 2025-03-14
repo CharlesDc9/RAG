@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     MODEL_NAME: str = "mistral-large-latest"
     EMBEDDINGS_MODEL: str = "sentence-transformers/all-mpnet-base-v2"
     
+    API_BASE_URL: str = "http://localhost:8000/api"
+
     # LangSmith settings
     LANGSMITH_TRACING: str = "false"
     LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
