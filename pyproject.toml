@@ -18,6 +18,8 @@ dependencies = [
     "chromadb",
     "beautifulsoup4",
     "typing-extensions",
+    "fastapi",
+    "uvicorn", 
 ]
 
 [tool.setuptools]
