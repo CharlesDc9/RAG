@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 
 class QuestionRequest(BaseModel):
     """Question request model."""
@@ -8,9 +8,10 @@ class QuestionRequest(BaseModel):
 class QuestionResponse(BaseModel):
     """Question response model."""
     answer: str
-    sources: List[str]
+    sources: List[str]  
     
 class DocumentResponse(BaseModel):
     """Document response model."""
     message: str
-    document_id: str
+    num_chunks: int
+    num_pages: int

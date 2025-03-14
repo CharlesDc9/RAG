@@ -1,11 +1,7 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
 import os
-from app.services.rag import RAGEngine
-from io import BytesIO
-import pypdf
+from app.api.routes import document
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -25,13 +21,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize RAG engine
-rag_engine = RAGEngine(MISTRAL_API_KEY)
-
-class QuestionRequest(BaseModel):
-    question: str
-    thread_id: Optional[str] = "default"
-
+# Include routers
+app.include_router(document.router, prefix="/api")
 
 @app.get("/")
 async def root():
@@ -39,54 +30,10 @@ async def root():
         "message": "Welcome to RAG API",
         "docs": "/docs",
         "endpoints": {
-            "upload": "/upload",
-            "ask": "/ask"
+            "upload": "/api/upload",
+            "ask": "/api/question"
         }
     }
-
-@app.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
-    """Upload and process a PDF document."""
-    try:
-        # Check if file is PDF
-        if file.content_type != "application/pdf":
-            raise HTTPException(
-                status_code=400,
-                detail="Only PDF files are supported"
-            )
-        
-        content = await file.read()
-        
-        # Extract text from PDF
-        pdf_file = BytesIO(content)
-        pdf_reader = pypdf.PdfReader(pdf_file)
-        text_content = ""
-        for page in pdf_reader.pages:
-            text_content += page.extract_text()
-        
-        # Process the extracted text
-        documents = await rag_engine.process_document(text_content)
-        
-        return {
-            "message": "PDF processed successfully",
-            "num_chunks": len(documents),
-            "num_pages": len(pdf_reader.pages)
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.post("/ask")
-async def ask_question(request: QuestionRequest):
-    """Ask a question about the uploaded documents."""
-    try:
-        response = await rag_engine.get_answer(
-            question=request.question,
-            thread_id=request.thread_id
-        )
-        return response
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

@@ -5,10 +5,16 @@ class Settings(BaseSettings):
     """Application settings."""
     
     APP_NAME: str = "RAG API"
-    ENVIRONMENT: str
+    ENVIRONMENT: str = "development"
     MISTRAL_API_KEY: str
-    MODEL_NAME: str
-    EMBEDDINGS_MODEL: str
+    MODEL_NAME: str = "mistral-large-latest"
+    EMBEDDINGS_MODEL: str = "sentence-transformers/all-mpnet-base-v2"
+    
+    # LangSmith settings
+    LANGSMITH_TRACING: str = "false"
+    LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
+    LANGSMITH_API_KEY: str = ""
+    LANGSMITH_PROJECT: str = "default"
     
     class Config:
         env_file = ".env"
