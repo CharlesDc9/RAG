@@ -24,6 +24,7 @@ dependencies = [
     "requests",
     "pypdf",
     "python-multipart"
+    "loguru"
 ]
 
 [tool.setuptools]

@@ -1,8 +1,16 @@
 import streamlit as st
 import requests
+from loguru import logger
 from typing import Optional
 import os
 from io import BytesIO
+import traceback
+import sys
+
+# Configure Loguru
+logger.remove()  # Remove default handler
+logger.add(sys.stderr, level="INFO")  # Add stderr handler
+logger.add("app.log", rotation="10 MB", level="DEBUG")  # Add file handler with rotation
 
 # Configure the API endpoint
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
@@ -18,6 +26,9 @@ class RAGFrontend:
         # Initialize session state
         if 'document_uploaded' not in st.session_state:
             st.session_state.document_uploaded = False
+        if 'error_logs' not in st.session_state:
+            st.session_state.error_logs = []
+
 
     def upload_pdf(self, file: BytesIO) -> Optional[dict]:
         """Upload a PDF file to the API."""
@@ -41,7 +52,9 @@ class RAGFrontend:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            st.error(f"Error uploading file: {str(e)}")
+            error_msg = f"Error uploading file: {str(e)}"
+            logger.exception(f"Upload failed: {error_msg}")
+            self._add_error_log(error_msg)
             return None
 
     def ask_question(self, question: str) -> Optional[dict]:
@@ -54,7 +67,9 @@ class RAGFrontend:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            st.error(f"Error asking question: {str(e)}")
+            error_msg = f"Error asking question: {str(e)}"
+            logger.exception(f"Question failed: {error_msg}")
+            self._add_error_log(error_msg)
             return None
 
     def render_sidebar(self):
@@ -70,6 +85,17 @@ class RAGFrontend:
                         if result:
                             st.success(f"Document processed successfully! Created {result['num_chunks']} chunks from {result['num_pages']} pages.")
                             st.session_state.document_uploaded = True
+            
+            with st.expander("Debug Logs"):
+                if st.button("Clear Logs"):
+                    st.session_state.error_logs = []
+                
+                if st.session_state.error_logs:
+                    for log in st.session_state.error_logs:
+                        st.error(log)
+                else:
+                    st.info("No errors logged")
+
 
     def render_qa_interface(self):
         """Render the Q&A interface."""
@@ -93,16 +119,26 @@ class RAGFrontend:
                     with st.expander("View Sources"):
                         for i, source in enumerate(result['sources'], 1):
                             st.markdown(f"**Source {i}:**")
-                            st.text(source)
+                            st.text(source)    
+                else:
+                        st.error("Failed to get an answer. Check the debug logs for details.")
+
 
     def main(self):
         """Main application."""
         st.title("📚 Document Q&A System")
+        logger.info("Application started")
         
         # Render components
         self.render_sidebar()
         self.render_qa_interface()
 
 if __name__ == "__main__":
-    app = RAGFrontend()
-    app.main()
+    try:
+        app = RAGFrontend()
+        app.main()
+    except Exception as e:
+        st.error(f"Application error: {str(e)}")
+        st.error(traceback.format_exc())
+        logger.critical(f"Application crashed: {str(e)}")
+        logger.exception("Critical application error")
