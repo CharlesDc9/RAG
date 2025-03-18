@@ -6,6 +6,7 @@ from app.services.llm import LLMService
 from io import BytesIO
 import pypdf
 import logging
+from typing import List, Dict
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -68,3 +69,48 @@ async def ask_question(
     except Exception as e:
         logger.error(f"Error answering question: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/documents", response_model=Dict)
+async def list_documents(
+    rag_service: RAGService = Depends(RAGService)
+):
+    """List all documents in the system."""
+    try:
+        documents = rag_service.engine.get_all_documents()
+        return {
+            "total_documents": len(documents.get('ids', [])),
+            "documents": documents
+        }
+    except Exception as e:
+        logger.error(f"Error listing documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/documents/{document_id}", response_model=Dict)
+async def get_document_details(
+    document_id: str,
+    rag_service: RAGService = Depends(RAGService)
+):
+    """Get details about a specific document."""
+    try:
+        document = rag_service.engine.get_document_by_metadata({"source": document_id})
+        if not document or not document.get('ids'):
+            raise HTTPException(status_code=404, detail="Document not found")
+        return document
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting document details: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/documents/{document_id}")
+async def delete_document(
+    document_id: str,
+    rag_service: RAGService = Depends(RAGService)
+):
+    """Delete a specific document and all its chunks."""
+    try:
+        rag_service.engine.delete_documents_by_metadata({"source": document_id})
+        return {"message": f"Document {document_id} deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting document: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

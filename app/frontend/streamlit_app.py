@@ -29,6 +29,12 @@ class RAGFrontend:
         if 'error_logs' not in st.session_state:
             st.session_state.error_logs = []
 
+    def _add_error_log(self, error_message: str):
+        """Add an error message to the session state error logs."""
+        if 'error_logs' not in st.session_state:
+            st.session_state.error_logs = []
+        st.session_state.error_logs.append(error_message)
+        logger.error(error_message)
 
     def upload_pdf(self, file: BytesIO) -> Optional[dict]:
         """Upload a PDF file to the API."""
@@ -47,10 +53,18 @@ class RAGFrontend:
             )
             
             if response.status_code != 200:
-                print(f"Error response: {response.text}")
+                error_content = response.json() if response.content else {"detail": "Unknown error"}
+                error_msg = f"Server error ({response.status_code}): {error_content.get('detail', str(error_content))}"
+                logger.error(f"Upload failed: {error_msg}")
+                self._add_error_log(error_msg)
+                return None
                 
-            response.raise_for_status()
             return response.json()
+        except requests.exceptions.HTTPError as e:
+            error_msg = f"HTTP Error: {str(e)}"
+            logger.exception(f"Upload failed: {error_msg}")
+            self._add_error_log(error_msg)
+            return None
         except Exception as e:
             error_msg = f"Error uploading file: {str(e)}"
             logger.exception(f"Upload failed: {error_msg}")
