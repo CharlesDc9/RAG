@@ -23,8 +23,9 @@ dependencies = [
     "streamlit",
     "requests",
     "pypdf",
-    "python-multipart"
-    "loguru"
+    "python-multipart",
+    "loguru",
+    "rich"
 ]
 
 [tool.setuptools]
