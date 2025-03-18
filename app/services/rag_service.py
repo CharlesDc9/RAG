@@ -11,10 +11,10 @@ class RAGService:
     def __init__(self):
         self.engine = RAGEngine(settings.MISTRAL_API_KEY)
     
-    async def add_documents(self, documents: List[Document]) -> None:
+    async def add_documents(self, documents: List[Document], filename: str) -> None:
         """Add documents to the vector store."""
         for doc in documents:
-            await self.engine.process_document(doc.page_content, doc.metadata)
+            await self.engine.process_document(doc.page_content, filename, doc.metadata)
     
     async def retrieve_context(self, question: str) -> Tuple[str, List[str]]:
         """Retrieve context for a question."""

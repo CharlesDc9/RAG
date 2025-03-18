@@ -7,6 +7,7 @@ from io import BytesIO
 import pypdf
 import logging
 from typing import List, Dict
+import os
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -41,14 +42,17 @@ async def upload_document(
                 detail="Could not extract text from PDF"
             )
         
-        # Process document
-        documents = await document_service.process_document(text_content)
+        # Get filename without extension
+        filename = os.path.splitext(file.filename)[0]
         
-        # Add to vector store
-        await rag_service.add_documents(documents)
+        # Process document with filename
+        documents = await document_service.process_document(text_content, filename)
+        
+        # Add to vector store with filename
+        await rag_service.add_documents(documents, filename)
         
         return DocumentResponse(
-            message="Document processed successfully",
+            message=f"Document processed successfully and stored in collection '{filename}'",
             num_chunks=len(documents),
             num_pages=len(pdf_reader.pages)
         )
@@ -113,4 +117,35 @@ async def delete_document(
         return {"message": f"Document {document_id} deleted successfully"}
     except Exception as e:
         logger.error(f"Error deleting document: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/collections")
+async def list_collections(
+    rag_service: RAGService = Depends(RAGService)
+):
+    """List all available collections."""
+    try:
+        collections = rag_service.engine.list_collections()
+        return {
+            "collections": collections
+        }
+    except Exception as e:
+        logger.error(f"Error listing collections: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/collections/{collection_name}")
+async def get_collection_documents(
+    collection_name: str,
+    rag_service: RAGService = Depends(RAGService)
+):
+    """Get all documents in a specific collection."""
+    try:
+        documents = rag_service.engine.get_collection_documents(collection_name)
+        if not documents:
+            raise HTTPException(status_code=404, detail=f"Collection '{collection_name}' not found")
+        return documents
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting collection documents: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

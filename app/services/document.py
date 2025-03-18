@@ -12,7 +12,11 @@ class DocumentService:
             chunk_overlap=200
         )
     
-    async def process_document(self, content: str) -> List[Document]:
+    async def process_document(self, content: str, filename: str = None) -> List[Document]:
         """Process document content into chunks."""
-        document = Document(page_content=content, metadata={"id": str(uuid.uuid4())})
+        metadata = {
+            "id": str(uuid.uuid4()),
+            "filename": filename
+        }
+        document = Document(page_content=content, metadata=metadata)
         return self.text_splitter.split_documents([document])

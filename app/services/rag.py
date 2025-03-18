@@ -11,6 +11,7 @@ from typing_extensions import Annotated, TypedDict
 import hashlib
 import logging
 import os
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -35,24 +36,15 @@ class RAGEngine:
         )
         
         # Ensure the persistence directory exists
-        persist_directory = "./chroma_db"
-        os.makedirs(persist_directory, exist_ok=True)
+        self.persist_directory = "./chroma_db"
+        os.makedirs(self.persist_directory, exist_ok=True)
         
         # Initialize ChromaDB client with persistence
-        self.chroma_client = chromadb.PersistentClient(path=persist_directory)
+        self.chroma_client = chromadb.PersistentClient(path=self.persist_directory)
         
-        # Get or create the collection
-        self.collection = self.chroma_client.get_or_create_collection(
-            name="rag_documents",
-            metadata={"hnsw:space": "cosine"}
-        )
-        
-        # Configure LangChain's Chroma integration
-        self.vector_store = Chroma(
-            client=self.chroma_client,
-            collection_name="rag_documents",
-            embedding_function=self.embeddings
-        )
+        # Store current collection
+        self.current_collection = None
+        self.vector_store = None
         
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, 
@@ -74,6 +66,108 @@ class RAGEngine:
         # Initialize the graph
         self._setup_graph()
 
+    def get_or_create_collection(self, name: str):
+        """Get or create a collection with the given name."""
+        # Clean the name to be valid for ChromaDB (alphanumeric and underscores only)
+        clean_name = "".join(c if c.isalnum() else "_" for c in name)
+        
+        # Get or create the collection
+        self.current_collection = self.chroma_client.get_or_create_collection(
+            name=clean_name,
+            metadata={"hnsw:space": "cosine"}
+        )
+        
+        # Update the vector store with the new collection
+        self.vector_store = Chroma(
+            client=self.chroma_client,
+            collection_name=clean_name,
+            embedding_function=self.embeddings
+        )
+        
+        return self.current_collection
+
+    def list_collections(self):
+        """List all available collections."""
+        return self.chroma_client.list_collections()
+
+    async def process_document(self, content: str, filename: str, metadata: Dict = None) -> List[Document]:
+        """Process and index a new document."""
+        if metadata is None:
+            metadata = {}
+        
+        # Create a collection for this document
+        collection_name = os.path.splitext(filename)[0]  # Remove file extension
+        self.get_or_create_collection(collection_name)
+        
+        # Add document identifier if not present
+        if 'source' not in metadata:
+            content_hash = hashlib.md5(content.encode()).hexdigest()
+            metadata['source'] = content_hash
+        
+        # Add filename to metadata
+        metadata['filename'] = filename
+        
+        documents = self.text_splitter.split_documents(
+            [Document(page_content=content, metadata=metadata)]
+        )
+        
+        # Add section metadata for filtering
+        total_documents = len(documents)
+        third = total_documents // 3
+        
+        for i, document in enumerate(documents):
+            document.metadata.update({
+                "section": "beginning" if i < third else "middle" if i < 2 * third else "end",
+                "chunk_index": i,
+                "total_chunks": total_documents,
+                "source": metadata['source'],
+                "filename": filename
+            })
+        
+        # Add to vector store
+        self.vector_store.add_documents(documents)
+        return documents
+
+    def get_collection_documents(self, collection_name: str) -> List[Dict]:
+        """Get all documents from a specific collection."""
+        collection = self.chroma_client.get_collection(collection_name)
+        return collection.get() if collection else None
+
+    async def get_answer(self, question: str, collection_name: str = None) -> Dict:
+        """Get answer for a question from a specific collection or all collections."""
+        try:
+            if collection_name:
+                self.get_or_create_collection(collection_name)
+            elif not self.vector_store:
+                # If no collection is specified and none is currently selected
+                collections = self.list_collections()
+                if not collections:
+                    return {
+                        "answer": "No document collections found. Please upload a document first.",
+                        "context": []
+                    }
+                # Use the first available collection
+                self.get_or_create_collection(collections[0])
+            
+            # Execute graph and get final response
+            result = self.graph.invoke({
+                "question": question,
+                "collection": collection_name
+            })
+            
+            return {
+                "answer": result["answer"],
+                "context": [doc.page_content for doc in result["context"]],
+                "collection": collection_name or "default"
+            }
+        except Exception as e:
+            logger.error(f"Error getting answer: {str(e)}")
+            return {
+                "answer": f"An error occurred while processing your question: {str(e)}",
+                "context": [],
+                "collection": collection_name
+            }
+
     def analyze_query(self, state: State):
         """Analyze the query to determine search parameters."""
         structured_llm = self.llm.with_structured_output(Search)
@@ -84,34 +178,47 @@ class RAGEngine:
         """Retrieve relevant documents based on the query."""
         query = state["query"]
         try:
+            if not self.vector_store:
+                logger.error("No collection selected for retrieval")
+                return {"context": [Document(
+                    page_content="Please select a collection before asking questions.",
+                    metadata={"source": "error"}
+                )]}
+
             # First try with section filter
-            retrieved_docs = self.vector_store.similarity_search(
-                query["query"],
-                filter={"section": query["section"]},
-            )
-            
-            # If no results, try without section filter
-            if not retrieved_docs:
+            try:
                 retrieved_docs = self.vector_store.similarity_search(
                     query["query"],
-                    k=3  # Maybe get more docs when not filtering
+                    filter={"section": query["section"]},
+                    k=3
+                )
+            except Exception as e:
+                logger.warning(f"Error searching with section filter: {str(e)}")
+                # Try without filter if filtering fails
+                retrieved_docs = []
+
+            # If no results, try without section filter
+            if not retrieved_docs:
+                logger.info("No results with section filter, trying without filter")
+                retrieved_docs = self.vector_store.similarity_search(
+                    query["query"],
+                    k=3
                 )
                 
             # Still no results? Add a fallback document
             if not retrieved_docs:
+                logger.warning("No results found for query")
                 retrieved_docs = [Document(
-                    page_content="No specific information found on this topic.",
-                    metadata={"source": "fallback"}
+                    page_content="No specific information found on this topic in the current collection.",
+                    metadata={"source": "no_results"}
                 )]
                 
             return {"context": retrieved_docs}
         except Exception as e:
-            # Log the error
-            print(f"Error in retrieve: {str(e)}")
-            # Return a fallback document
+            logger.error(f"Error in retrieve: {str(e)}")
             return {"context": [Document(
-                page_content="Unable to retrieve information due to a technical issue.",
-                metadata={"source": "error"}
+                page_content="Unable to retrieve information due to a technical issue. Please ensure a document collection is selected.",
+                metadata={"source": "error", "error": str(e)}
             )]}
 
     def generate(self, state: State):
@@ -135,57 +242,6 @@ class RAGEngine:
         
         # Compile the graph
         self.graph = graph_builder.compile()
-
-    async def process_document(self, content: str, metadata: Dict = None) -> List[Document]:
-        """Process and index a new document."""
-        if metadata is None:
-            metadata = {}
-        
-        # Add document identifier if not present
-        if 'source' not in metadata:
-            content_hash = hashlib.md5(content.encode()).hexdigest()
-            metadata['source'] = content_hash
-        
-        # Check if document already exists
-        existing_docs = self.vector_store.get(
-            where={"source": metadata['source']}
-        )
-        
-        if existing_docs and 'ids' in existing_docs and len(existing_docs['ids']) > 0:
-            logger.info(f"Document with source {metadata['source']} already exists. Skipping...")
-            return []
-            
-        documents = self.text_splitter.split_documents(
-            [Document(page_content=content, metadata=metadata)]
-        )
-        
-        # Add section metadata for filtering
-        total_documents = len(documents)
-        third = total_documents // 3
-        
-        for i, document in enumerate(documents):
-            document.metadata.update({
-                "section": "beginning" if i < third else "middle" if i < 2 * third else "end",
-                "chunk_index": i,
-                "total_chunks": total_documents,
-                "source": metadata['source']
-            })
-        
-        # Add to vector store
-        self.vector_store.add_documents(documents)
-        # Persistence is handled automatically by PersistentClient
-        return documents
-
-    async def get_answer(self, question: str) -> Dict:
-        """Get answer for a question."""
-        # Execute graph and get final response
-        result = self.graph.invoke({"question": question})
-        
-        # Return the final response
-        return {
-            "answer": result["answer"],
-            "context": [doc.page_content for doc in result["context"]]
-        }
 
     def get_all_documents(self) -> List[Dict]:
         """Get all documents stored in the vector store."""
